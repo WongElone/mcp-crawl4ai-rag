@@ -74,7 +74,9 @@ The server provides essential web crawling and search tools:
 - [Docker/Docker Desktop](https://www.docker.com/products/docker-desktop/) if running the MCP server as a container (recommended)
 - [Python 3.12+](https://www.python.org/downloads/) if running the MCP server directly through uv
 - [Supabase](https://supabase.com/) (database for RAG)
-- [OpenAI API key](https://platform.openai.com/api-keys) (for generating embeddings)
+- **Embedding Provider** (choose one):
+  - [OpenAI API key](https://platform.openai.com/api-keys) (for OpenAI embeddings)
+  - [Ollama](https://ollama.ai/) (for local embeddings) - see [Ollama Setup](#ollama-setup) section
 - [Neo4j](https://neo4j.com/) (optional, for knowledge graph functionality) - see [Knowledge Graph Setup](#knowledge-graph-setup) section
 
 ## Installation
@@ -185,8 +187,18 @@ HOST=0.0.0.0
 PORT=8051
 TRANSPORT=sse
 
-# OpenAI API Configuration
+# Embedding Provider Configuration
+# Choose between 'openai' or 'ollama' for embedding generation
+EMBEDDING_PROVIDER=ollama
+
+# OpenAI Configuration (only needed if EMBEDDING_PROVIDER=openai)
 OPENAI_API_KEY=your_openai_api_key
+
+# Ollama Configuration (only needed if EMBEDDING_PROVIDER=ollama)
+# Ollama server URL (default: http://localhost:11434)
+OLLAMA_HOST=http://localhost:11434
+# Ollama embedding model to use (e.g., 'nomic-embed-text', 'mxbai-embed-large')
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 
 # LLM for summaries and contextual embeddings
 MODEL_CHOICE=gpt-4.1-nano
@@ -298,6 +310,59 @@ USE_AGENTIC_RAG=false
 USE_RERANKING=false
 USE_KNOWLEDGE_GRAPH=false
 ```
+
+## Ollama Setup
+
+If you choose to use Ollama for local embeddings (recommended for privacy and cost savings), follow these steps:
+
+### 1. Install Ollama
+
+Download and install Ollama from [https://ollama.ai/](https://ollama.ai/)
+
+### 2. Pull an Embedding Model
+
+Choose one of the supported embedding models:
+
+```bash
+# Recommended: nomic-embed-text (768 dimensions, good quality)
+ollama pull nomic-embed-text
+
+# Alternative: mxbai-embed-large (1024 dimensions, higher quality but slower)
+ollama pull mxbai-embed-large
+
+# Alternative: all-minilm (384 dimensions, fastest but lower quality)
+ollama pull all-minilm
+```
+
+### 3. Verify Ollama is Running
+
+```bash
+# Check if Ollama is running
+curl http://localhost:11434/api/tags
+
+# Test embedding generation
+curl http://localhost:11434/api/embeddings -d '{
+  "model": "nomic-embed-text",
+  "prompt": "Hello world"
+}'
+```
+
+### 4. Configure Environment Variables
+
+Set the following in your `.env` file:
+
+```bash
+EMBEDDING_PROVIDER=ollama
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+```
+
+**Note**: Different embedding models have different dimensions:
+- `nomic-embed-text`: 768 dimensions
+- `mxbai-embed-large`: 1024 dimensions  
+- `all-minilm`: 384 dimensions
+
+The database schema is set to 1536 dimensions by default (for OpenAI compatibility). For optimal performance with Ollama models, you may want to update your database schema to match your chosen model's dimensions, though the current schema will work with zero-padding.
 
 ## Running the Server
 

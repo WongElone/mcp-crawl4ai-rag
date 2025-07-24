@@ -8,11 +8,22 @@ import json
 from supabase import create_client, Client
 from urllib.parse import urlparse
 import openai
+import ollama
 import re
 import time
 
-# Load OpenAI API key for embeddings
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Embedding provider configuration
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "ollama").lower()
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+
+# Load OpenAI API key for embeddings (only if using OpenAI)
+if EMBEDDING_PROVIDER == "openai":
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# Initialize Ollama client (only if using Ollama)
+if EMBEDDING_PROVIDER == "ollama":
+    ollama_client = ollama.Client(host=OLLAMA_HOST)
 
 def get_supabase_client() -> Client:
     """
@@ -29,9 +40,26 @@ def get_supabase_client() -> Client:
     
     return create_client(url, key)
 
+def get_embedding_dimension() -> int:
+    """
+    Get the embedding dimension based on the provider.
+    
+    Returns:
+        Embedding dimension size
+    """
+    if EMBEDDING_PROVIDER == "openai":
+        return 1536  # text-embedding-3-small dimension
+    elif EMBEDDING_PROVIDER == "ollama":
+        # Most Ollama embedding models use different dimensions
+        # nomic-embed-text uses 768, mxbai-embed-large uses 1024
+        # We'll detect this dynamically or use a default
+        return 768  # Default for nomic-embed-text
+    else:
+        return 1536  # Default fallback
+
 def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """
-    Create embeddings for multiple texts in a single API call.
+    Create embeddings for multiple texts using the configured provider.
     
     Args:
         texts: List of texts to create embeddings for
@@ -42,26 +70,37 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
     if not texts:
         return []
     
+    if EMBEDDING_PROVIDER == "openai":
+        return _create_openai_embeddings_batch(texts)
+    elif EMBEDDING_PROVIDER == "ollama":
+        return _create_ollama_embeddings_batch(texts)
+    else:
+        raise ValueError(f"Unsupported embedding provider: {EMBEDDING_PROVIDER}")
+
+def _create_openai_embeddings_batch(texts: List[str]) -> List[List[float]]:
+    """
+    Create embeddings using OpenAI API.
+    """
     max_retries = 3
-    retry_delay = 1.0  # Start with 1 second delay
+    retry_delay = 1.0
     
     for retry in range(max_retries):
         try:
             response = openai.embeddings.create(
-                model="text-embedding-3-small", # Hardcoding embedding model for now, will change this later to be more dynamic
+                model="text-embedding-3-small",
                 input=texts
             )
             return [item.embedding for item in response.data]
         except Exception as e:
             if retry < max_retries - 1:
-                print(f"Error creating batch embeddings (attempt {retry + 1}/{max_retries}): {e}")
+                print(f"Error creating OpenAI batch embeddings (attempt {retry + 1}/{max_retries}): {e}")
                 print(f"Retrying in {retry_delay} seconds...")
                 time.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
+                retry_delay *= 2
             else:
-                print(f"Failed to create batch embeddings after {max_retries} attempts: {e}")
+                print(f"Failed to create OpenAI batch embeddings after {max_retries} attempts: {e}")
                 # Try creating embeddings one by one as fallback
-                print("Attempting to create embeddings individually...")
+                print("Attempting to create OpenAI embeddings individually...")
                 embeddings = []
                 successful_count = 0
                 
@@ -74,16 +113,49 @@ def create_embeddings_batch(texts: List[str]) -> List[List[float]]:
                         embeddings.append(individual_response.data[0].embedding)
                         successful_count += 1
                     except Exception as individual_error:
-                        print(f"Failed to create embedding for text {i}: {individual_error}")
-                        # Add zero embedding as fallback
+                        print(f"Failed to create OpenAI embedding for text {i}: {individual_error}")
                         embeddings.append([0.0] * 1536)
                 
-                print(f"Successfully created {successful_count}/{len(texts)} embeddings individually")
+                print(f"Successfully created {successful_count}/{len(texts)} OpenAI embeddings individually")
                 return embeddings
+    
+    # This should never be reached, but adding for completeness
+    return [[0.0] * 1536 for _ in texts]
+
+def _create_ollama_embeddings_batch(texts: List[str]) -> List[List[float]]:
+    """
+    Create embeddings using Ollama API.
+    """
+    embeddings = []
+    embedding_dim = get_embedding_dimension()
+    
+    for i, text in enumerate(texts):
+        max_retries = 3
+        retry_delay = 1.0
+        
+        for retry in range(max_retries):
+            try:
+                response = ollama_client.embeddings(
+                    model=OLLAMA_EMBEDDING_MODEL,
+                    prompt=text
+                )
+                embeddings.append(response['embedding'])
+                break
+            except Exception as e:
+                if retry < max_retries - 1:
+                    print(f"Error creating Ollama embedding for text {i} (attempt {retry + 1}/{max_retries}): {e}")
+                    print(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    print(f"Failed to create Ollama embedding for text {i} after {max_retries} attempts: {e}")
+                    embeddings.append([0.0] * embedding_dim)
+    
+    return embeddings
 
 def create_embedding(text: str) -> List[float]:
     """
-    Create an embedding for a single text using OpenAI's API.
+    Create an embedding for a single text using the configured provider.
     
     Args:
         text: Text to create an embedding for
@@ -93,11 +165,16 @@ def create_embedding(text: str) -> List[float]:
     """
     try:
         embeddings = create_embeddings_batch([text])
-        return embeddings[0] if embeddings else [0.0] * 1536
+        if embeddings:
+            return embeddings[0]
+        else:
+            embedding_dim = get_embedding_dimension()
+            return [0.0] * embedding_dim
     except Exception as e:
         print(f"Error creating embedding: {e}")
         # Return empty embedding if there's an error
-        return [0.0] * 1536
+        embedding_dim = get_embedding_dimension()
+        return [0.0] * embedding_dim
 
 def generate_contextual_embedding(full_document: str, chunk: str) -> Tuple[str, bool]:
     """

@@ -23,7 +23,7 @@ create table crawled_pages (
     content text not null,
     metadata jsonb not null default '{}'::jsonb,
     source_id text not null,
-    embedding vector(1536),  -- OpenAI embeddings are 1536 dimensions
+    embedding vector(1536),  -- Default: OpenAI (1536), Ollama varies (768 for nomic-embed-text, 1024 for mxbai-embed-large)
     created_at timestamp with time zone default timezone('utc'::text, now()) not null,
     
     -- Add a unique constraint to prevent duplicate chunks for the same URL
@@ -107,7 +107,7 @@ create table code_examples (
     summary text not null,  -- Summary of the code example
     metadata jsonb not null default '{}'::jsonb,
     source_id text not null,
-    embedding vector(1536),  -- OpenAI embeddings are 1536 dimensions
+    embedding vector(1536),  -- Default: OpenAI (1536), Ollama varies (768 for nomic-embed-text, 1024 for mxbai-embed-large)
     created_at timestamp with time zone default timezone('utc'::text, now()) not null,
     
     -- Add a unique constraint to prevent duplicate chunks for the same URL
