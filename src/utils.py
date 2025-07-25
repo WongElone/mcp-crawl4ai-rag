@@ -46,10 +46,6 @@ except ImportError:
 if EMBEDDING_PROVIDER == "openai":
     openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Initialize Ollama client (only if using Ollama)
-if EMBEDDING_PROVIDER == "ollama":
-    ollama_client = ollama.Client(host=OLLAMA_HOST)
-
 def get_supabase_client() -> Client:
     """
     Get a Supabase client with the URL and key from environment variables.
@@ -163,34 +159,34 @@ def _create_openai_embeddings_batch(texts: List[str]) -> List[List[float]]:
 
 def _create_ollama_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """
-    Create embeddings using Ollama API.
+    Create embeddings using Ollama API in a single batch.
     """
-    embeddings = []
+    max_retries = 3
+    retry_delay = 1.0
     embedding_dim = get_embedding_dimension()
+
+    for retry in range(max_retries):
+        try:
+            # Use the ollama.embed function for batch processing
+            response = ollama.embed(
+                model=OLLAMA_EMBEDDING_MODEL,
+                input=texts
+            )
+            # The response contains a list of embeddings
+            return [r['embedding'] for r in response]
+        except Exception as e:
+            if retry < max_retries - 1:
+                print(f"Error creating Ollama batch embeddings (attempt {retry + 1}/{max_retries}): {e}")
+                print(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2
+            else:
+                print(f"Failed to create Ollama batch embeddings after {max_retries} attempts: {e}")
+                # Return a list of zero vectors as a fallback
+                return [[0.0] * embedding_dim for _ in texts]
     
-    for i, text in enumerate(texts):
-        max_retries = 3
-        retry_delay = 1.0
-        
-        for retry in range(max_retries):
-            try:
-                response = ollama_client.embeddings(
-                    model=OLLAMA_EMBEDDING_MODEL,
-                    prompt=text
-                )
-                embeddings.append(response['embedding'])
-                break
-            except Exception as e:
-                if retry < max_retries - 1:
-                    print(f"Error creating Ollama embedding for text {i} (attempt {retry + 1}/{max_retries}): {e}")
-                    print(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                else:
-                    print(f"Failed to create Ollama embedding for text {i} after {max_retries} attempts: {e}")
-                    embeddings.append([0.0] * embedding_dim)
-    
-    return embeddings
+    # This should not be reached, but adding for completeness
+    return [[0.0] * embedding_dim for _ in texts]
 
 def create_embedding(text: str) -> List[float]:
     """
