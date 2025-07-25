@@ -17,7 +17,32 @@ EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "ollama").lower()
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 
-# Load OpenAI API key for embeddings (only if using OpenAI)
+# LLM provider configuration for contextual embeddings and summaries
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()  # "openai" or "openrouter"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+MODEL_CHOICE = os.getenv("MODEL_CHOICE", "gpt-4o-mini")  # For OpenAI
+
+# Initialize LLM clients
+openai_llm_client = None
+openrouter_client = None
+
+# Import OpenAI client for LLM calls
+try:
+    from openai import OpenAI
+    
+    if LLM_PROVIDER == "openai" and OPENAI_API_KEY:
+        openai_llm_client = OpenAI(api_key=OPENAI_API_KEY)
+    elif LLM_PROVIDER == "openrouter" and OPENROUTER_API_KEY:
+        openrouter_client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPENROUTER_API_KEY,
+        )
+except ImportError:
+    print("Warning: OpenAI package not available. LLM functionality will be disabled.")
+
+# Load OpenAI API key for embeddings (only if using OpenAI for embeddings)
 if EMBEDDING_PROVIDER == "openai":
     openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -39,6 +64,20 @@ def get_supabase_client() -> Client:
         raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment variables")
     
     return create_client(url, key)
+
+def get_llm_client_and_model() -> Tuple[Optional[Any], str]:
+    """
+    Get the appropriate LLM client and model based on the configured provider.
+    
+    Returns:
+        Tuple of (client, model_name) or (None, "") if no client is available
+    """
+    if LLM_PROVIDER == "openai" and openai_llm_client:
+        return openai_llm_client, MODEL_CHOICE
+    elif LLM_PROVIDER == "openrouter" and openrouter_client:
+        return openrouter_client, OPENROUTER_MODEL
+    else:
+        return None, ""
 
 def get_embedding_dimension() -> int:
     """
@@ -189,7 +228,12 @@ def generate_contextual_embedding(full_document: str, chunk: str) -> Tuple[str, 
         - The contextual text that situates the chunk within the document
         - Boolean indicating if contextual embedding was performed
     """
-    model_choice = os.getenv("MODEL_CHOICE")
+    # Get the appropriate LLM client and model
+    llm_client, model_name = get_llm_client_and_model()
+    
+    if not llm_client:
+        print(f"No LLM client available (provider: {LLM_PROVIDER}). Using original chunk instead.")
+        return chunk, False
     
     try:
         # Create the prompt for generating contextual information
@@ -202,9 +246,9 @@ Here is the chunk we want to situate within the whole document
 </chunk> 
 Please give a short succinct context to situate this chunk within the overall document for the purposes of improving search retrieval of the chunk. Answer only with the succinct context and nothing else."""
 
-        # Call the OpenAI API to generate contextual information
-        response = openai.chat.completions.create(
-            model=model_choice,
+        # Call the LLM API to generate contextual information
+        response = llm_client.chat.completions.create(
+            model=model_name,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that provides concise contextual information."},
                 {"role": "user", "content": prompt}
@@ -526,7 +570,12 @@ def generate_code_example_summary(code: str, context_before: str, context_after:
     Returns:
         A summary of what the code example demonstrates
     """
-    model_choice = os.getenv("MODEL_CHOICE")
+    # Get the appropriate LLM client and model
+    llm_client, model_name = get_llm_client_and_model()
+    
+    if not llm_client:
+        print(f"No LLM client available (provider: {LLM_PROVIDER}). Using default summary.")
+        return "Code example for demonstration purposes."
     
     # Create the prompt
     prompt = f"""<context_before>
@@ -545,8 +594,8 @@ Based on the code example and its surrounding context, provide a concise summary
 """
     
     try:
-        response = openai.chat.completions.create(
-            model=model_choice,
+        response = llm_client.chat.completions.create(
+            model=model_name,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that provides concise code example summaries."},
                 {"role": "user", "content": prompt}
@@ -724,8 +773,12 @@ def extract_source_summary(source_id: str, content: str, max_length: int = 500) 
     if not content or len(content.strip()) == 0:
         return default_summary
     
-    # Get the model choice from environment variables
-    model_choice = os.getenv("MODEL_CHOICE")
+    # Get the appropriate LLM client and model
+    llm_client, model_name = get_llm_client_and_model()
+    
+    if not llm_client:
+        print(f"No LLM client available (provider: {LLM_PROVIDER}). Using default summary for {source_id}.")
+        return default_summary
     
     # Limit content length to avoid token limits
     truncated_content = content[:25000] if len(content) > 25000 else content
@@ -739,9 +792,9 @@ The above content is from the documentation for '{source_id}'. Please provide a 
 """
     
     try:
-        # Call the OpenAI API to generate the summary
-        response = openai.chat.completions.create(
-            model=model_choice,
+        # Call the LLM API to generate the summary
+        response = llm_client.chat.completions.create(
+            model=model_name,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that provides concise library/tool/framework summaries."},
                 {"role": "user", "content": prompt}
