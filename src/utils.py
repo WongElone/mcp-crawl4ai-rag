@@ -172,8 +172,8 @@ def _create_ollama_embeddings_batch(texts: List[str]) -> List[List[float]]:
                 model=OLLAMA_EMBEDDING_MODEL,
                 input=texts
             )
-            # The response contains a list of embeddings
-            return [r['embedding'] for r in response]
+            # The response is a dictionary with an 'embeddings' key
+            return response['embeddings']
         except Exception as e:
             if retry < max_retries - 1:
                 print(f"Error creating Ollama batch embeddings (attempt {retry + 1}/{max_retries}): {e}")
